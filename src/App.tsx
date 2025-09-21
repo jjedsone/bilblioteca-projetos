@@ -8,7 +8,6 @@ import Importer from "./components/Importer";
 import BookView from "./components/BookView";
 import CoverManager from "./components/CoverManager";
 import MetadataManager from "./components/MetadataManager";
-import ChatPanel from "./components/ChatPanel";
 import { useProjects } from "./store/projects";
 import "./styles/global.css";
 
@@ -90,7 +89,6 @@ export default function App() {
               <div className="card" style={{ marginTop: 16 }}>
                 <h3>Assistente (IA)</h3>
                 <p>Converse com a IA sobre o conteúdo ou peça ajuda técnica.</p>
-                <ChatPanel />
               </div>
             </>
           )}
