@@ -1,0 +1,497 @@
+// src/components/BookView.tsx
+import { useState, useCallback } from "react";
+import type { Book, Chapter } from "../types";
+import { makeId } from "../types";
+import ChapterList from "./ChapterList";
+import SearchBar from "./SearchBar";
+import FocusMode from "./FocusMode";
+import BookPageView from "./BookPageView";
+import ChapterIndex from "./ChapterIndex";
+import MiniMap from "./MiniMap";
+import AdvancedSearch from "./AdvancedSearch";
+import AnnotationsManager from "./AnnotationsManager";
+import CommentsManager from "./CommentsManager";
+import AIAssistant from "./AIAssistant";
+import { useProjects } from "../store/projects";
+import { useTheme } from "../store/theme";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import { exportChapterToPDF, exportChapterToMarkdown, exportChapterToHTML } from "../utils/exportChapter";
+import { renderDraculaSyntaxHTML } from "../utils/draculaSyntax";
+
+// ===== Helpers =====
+const splitParas = (text: string): string[] =>
+  text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+
+const joinParas = (paras: string[]): string =>
+  paras.join("\n\n");
+
+const sanitizeHtml = (text: string): string =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// ===== Component =====
+interface BookViewProps {
+  book: Book;
+}
+
+export default function BookView({ book }: BookViewProps) {
+  const [current, setCurrent] = useState(0);
+  const [focusMode, setFocusMode] = useState(false);
+  const [bookPageView, setBookPageView] = useState(false);
+  const [singlePage, setSinglePage] = useState(false);
+  const [showIndex, setShowIndex] = useState(false);
+  const [showMiniMap, setShowMiniMap] = useState(false);
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [, setAdvancedSearchResults] = useState<any[]>([]);
+  const [useDraculaFont, setUseDraculaFont] = useState(false);
+  const { projects, selectedId, setBook, updateProject } = useProjects();
+  const { theme } = useTheme();
+
+  const proj = projects.find(p => p.id === selectedId);
+  const ch = book.chapters[current];
+  const paras = splitParas(ch.text);
+
+  // Função para verificar se um parágrafo tem fonte Dracula ativa
+  const getParagraphDraculaFont = (paragraphIndex: number): boolean => {
+    if (!proj?.paragraphFontSettings) return false;
+    const chapterKey = current.toString();
+    return proj.paragraphFontSettings[chapterKey]?.[paragraphIndex] || false;
+  };
+
+  // Função para alternar fonte Dracula de um parágrafo
+  const toggleParagraphDraculaFont = (paragraphIndex: number) => {
+    if (!proj) return;
+    const chapterKey = current.toString();
+    const currentSettings = proj.paragraphFontSettings || {};
+    const chapterSettings = currentSettings[chapterKey] || {};
+    const newValue = !chapterSettings[paragraphIndex];
+    
+    updateProject(proj.id, {
+      paragraphFontSettings: {
+        ...currentSettings,
+        [chapterKey]: {
+          ...chapterSettings,
+          [paragraphIndex]: newValue,
+        },
+      },
+    });
+  };
+
+  // Atalhos de teclado
+  useKeyboardShortcuts([
+    {
+      key: "f",
+      ctrl: true,
+      action: () => setFocusMode(true),
+      description: "Abrir modo foco",
+    },
+    {
+      key: "ArrowUp",
+      action: () => setCurrent((c) => Math.max(0, c - 1)),
+      description: "Capítulo anterior",
+    },
+    {
+      key: "ArrowDown",
+      action: () => setCurrent((c) => Math.min(book.chapters.length - 1, c + 1)),
+      description: "Próximo capítulo",
+    },
+  ]);
+
+  const handleRename = useCallback(() => {
+    if (!proj) return;
+    const title = prompt("Novo título do capítulo:", ch.title);
+    if (title == null) return;
+
+    const updated: Book = {
+      ...book,
+      chapters: book.chapters.map((c, i) =>
+        i === current ? { ...c, title: title.trim() || c.title } : c
+      ),
+    };
+    setBook(proj.id, updated);
+  }, [proj, ch.title, book, current, setBook]);
+
+  const handleMergeWithPrevious = useCallback(() => {
+    if (!proj) return;
+    if (current === 0) {
+      alert("Não há capítulo anterior.");
+      return;
+    }
+    const prev = book.chapters[current - 1];
+    const merged: Chapter = {
+      ...prev,
+      text: joinParas(splitParas(prev.text).concat(paras)),
+    };
+    const chapters = [...book.chapters];
+    chapters[current - 1] = merged;
+    chapters.splice(current, 1);
+    setBook(proj.id, { ...book, chapters });
+    setCurrent(current - 1);
+  }, [proj, current, book, paras, setBook]);
+
+  const handleMergeWithNext = useCallback(() => {
+    if (!proj) return;
+    if (current >= book.chapters.length - 1) {
+      alert("Não há capítulo seguinte.");
+      return;
+    }
+    const next = book.chapters[current + 1];
+    const merged: Chapter = {
+      ...ch,
+      text: joinParas(paras.concat(splitParas(next.text))),
+    };
+    const chapters = [...book.chapters];
+    chapters[current] = merged;
+    chapters.splice(current + 1, 1);
+    setBook(proj.id, { ...book, chapters });
+  }, [proj, current, book, ch, paras, setBook]);
+
+  if (focusMode) {
+    return (
+      <FocusMode
+        book={book}
+        chapter={ch}
+        chapterIndex={current}
+        onClose={() => setFocusMode(false)}
+        onNavigate={(direction) => {
+          if (direction === "prev" && current > 0) {
+            setCurrent(current - 1);
+          } else if (direction === "next" && current < book.chapters.length - 1) {
+            setCurrent(current + 1);
+          }
+        }}
+        canGoPrev={current > 0}
+        canGoNext={current < book.chapters.length - 1}
+      />
+    );
+  }
+
+  if (bookPageView) {
+    return (
+      <div style={{ width: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, padding: "0 12px" }}>
+          <button
+            className="btn"
+            onClick={() => setBookPageView(false)}
+            title="Voltar para visualização normal"
+          >
+            ← Voltar
+          </button>
+          <h2 style={{ margin: 0, color: "var(--accent)" }}>📖 Visualização de Livro</h2>
+        </div>
+        <BookPageView
+          book={book}
+          currentChapter={current}
+          onChapterChange={setCurrent}
+          singlePage={singlePage}
+          onSinglePageChange={setSinglePage}
+          projectId={proj?.id || ""}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="content">
+      <ChapterList book={book} current={current} onSelect={setCurrent} />
+
+      <div className="reader">
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <h1>{book.title}</h1>
+              <h2>{current + 1}. {ch.title}</h2>
+            </div>
+            <SearchBar book={book} />
+          </div>
+          
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              className="btn"
+              onClick={() => setShowIndex(!showIndex)}
+              title="Mostrar/ocultar índice"
+            >
+              {showIndex ? "📑 Ocultar Índice" : "📑 Índice"}
+            </button>
+            <button
+              className="btn"
+              onClick={() => setShowMiniMap(!showMiniMap)}
+              title="Mostrar/ocultar mini mapa"
+            >
+              {showMiniMap ? "🗺️ Ocultar Mapa" : "🗺️ Mini Mapa"}
+            </button>
+            <button
+              className="btn"
+              onClick={() => exportChapterToPDF(ch, book.title)}
+              title="Exportar capítulo como PDF"
+            >
+              📄 Exportar Capítulo (PDF)
+            </button>
+            <button
+              className="btn"
+              onClick={() => exportChapterToMarkdown(ch, book.title)}
+              title="Exportar capítulo como Markdown"
+            >
+              📝 Exportar Capítulo (MD)
+            </button>
+            <button
+              className="btn"
+              onClick={() => exportChapterToHTML(ch, book.title)}
+              title="Exportar capítulo como HTML"
+            >
+              🌐 Exportar Capítulo (HTML)
+            </button>
+            <button
+              className="btn"
+              onClick={() => setShowAdvancedSearch(true)}
+              title="Busca avançada com filtros"
+            >
+              🔍 Busca Avançada
+            </button>
+            <button
+              className={`btn ${useDraculaFont ? "primary" : ""}`}
+              onClick={() => setUseDraculaFont(!useDraculaFont)}
+              title="Usar fonte do tema Dracula (Fira Code/JetBrains Mono)"
+            >
+              {useDraculaFont ? "🔤 Fonte Dracula (Ativa)" : "🔤 Fonte Dracula"}
+            </button>
+          </div>
+          
+          {(showIndex || showMiniMap) && (
+            <div style={{ display: "grid", gridTemplateColumns: showIndex && showMiniMap ? "1fr 1fr" : "1fr", gap: 12 }}>
+              {showIndex && (
+                <ChapterIndex
+                  book={book}
+                  currentChapter={current}
+                  onChapterSelect={(index) => {
+                    setCurrent(index);
+                    setShowIndex(false);
+                  }}
+                />
+              )}
+              {showMiniMap && (
+                <MiniMap
+                  book={book}
+                  currentChapter={current}
+                  onChapterSelect={(index) => {
+                    setCurrent(index);
+                    setShowMiniMap(false);
+                  }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="buttonGroup">
+          <button className="btn" onClick={handleRename} title="Renomear este capítulo">✏️ Renomear</button>
+          <button className="btn" onClick={handleMergeWithPrevious} title="Mesclar com capítulo anterior">⬆️ Mesclar anterior</button>
+          <button className="btn" onClick={handleMergeWithNext} title="Mesclar com próximo capítulo">⬇️ Mesclar próximo</button>
+          <button 
+            className="btn success" 
+            onClick={() => setBookPageView(true)}
+            title="Visualização tipo livro físico"
+          >
+            📖 Visualização Livro
+          </button>
+          <button 
+            className="btn primary" 
+            onClick={() => setFocusMode(true)}
+            title="Modo foco (Ctrl+F)"
+          >
+            🎯 Modo Foco
+          </button>
+        </div>
+
+        {/* Editor de parágrafos (fonte de verdade = ch.text) */}
+        <div className="paragraphEditor">
+          <div style={{ color: "#93a3b5", marginBottom: 6 }}>
+            Clique em um parágrafo para editar. Use os botões para adicionar/remover.
+          </div>
+
+          {paras.map((p, idx) => (
+            <div key={idx} style={{ marginBottom: "24px" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr auto",
+                  gap: 8,
+                  alignItems: "start",
+                  marginBottom: 8,
+                }}
+              >
+                <div
+                  contentEditable
+                  suppressContentEditableWarning
+                  className="paragraph"
+                  style={{
+                    fontFamily: (useDraculaFont || getParagraphDraculaFont(idx))
+                      ? (theme.name === "dracula" && theme.font 
+                          ? theme.font 
+                          : "'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace")
+                      : "inherit",
+                    fontSize: (useDraculaFont || getParagraphDraculaFont(idx)) ? "14px" : "inherit",
+                    lineHeight: (useDraculaFont || getParagraphDraculaFont(idx)) ? "1.6" : "inherit",
+                    letterSpacing: (useDraculaFont || getParagraphDraculaFont(idx)) ? "0.02em" : "inherit",
+                  }}
+                  onInput={(e) => {
+                    if (!proj) return;
+                    const el = e.currentTarget as HTMLDivElement;
+                    const newParas = [...paras];
+                    newParas[idx] = el.innerText;
+                    const updated: Book = {
+                      ...book,
+                      chapters: book.chapters.map((c, i) =>
+                        i === current ? { ...c, text: joinParas(newParas) } : c
+                      ),
+                    };
+                    setBook(proj.id, updated);
+                  }}
+                  dangerouslySetInnerHTML={{ 
+                    __html: (useDraculaFont || getParagraphDraculaFont(idx))
+                      ? renderDraculaSyntaxHTML(p) 
+                      : sanitizeHtml(p) 
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: 6 }}>
+                  {/* + Parágrafo */}
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (!proj) return;
+                      const newParas = [...paras];
+                      newParas.splice(idx + 1, 0, "");
+                      const updated: Book = {
+                        ...book,
+                        chapters: book.chapters.map((c, i) =>
+                          i === current ? { ...c, text: joinParas(newParas) } : c
+                        ),
+                      };
+                      setBook(proj.id, updated);
+                    }}
+                  >
+                    + Parágrafo
+                  </button>
+
+                  {/* Dividir aqui */}
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (!proj) return;
+
+                      const before = paras.slice(0, idx + 1);
+                      const after = paras.slice(idx + 1);
+                      if (after.length === 0) {
+                        alert("Nada para mover para o novo capítulo.");
+                        return;
+                      }
+
+                      const newTitle =
+                        prompt("Título do novo capítulo:", ch.title + " (continuação)") ||
+                        ch.title + " (continuação)";
+
+                      const newChapter: Chapter = {
+                        id: makeId("ch"),
+                        title: newTitle,
+                        text: joinParas(after),
+                      };
+
+                      const chapters = [...book.chapters];
+                      chapters[current] = { ...ch, text: joinParas(before) };
+                      chapters.splice(current + 1, 0, newChapter);
+
+                      setBook(proj.id, { ...book, chapters });
+                    }}
+                  >
+                    Dividir aqui
+                  </button>
+
+                  {/* Fonte Dracula por parágrafo */}
+                  <button
+                    className={`btn ${getParagraphDraculaFont(idx) ? "primary" : ""}`}
+                    onClick={() => toggleParagraphDraculaFont(idx)}
+                    title={getParagraphDraculaFont(idx) ? "Desativar fonte Dracula neste parágrafo" : "Ativar fonte Dracula neste parágrafo"}
+                  >
+                    {getParagraphDraculaFont(idx) ? "🔤 Dracula (Ativa)" : "🔤 Dracula"}
+                  </button>
+
+                  {/* Remover parágrafo */}
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (!proj) return;
+                      const newParas = [...paras];
+                      newParas.splice(idx, 1);
+                      const updated: Book = {
+                        ...book,
+                        chapters: book.chapters.map((c, i) =>
+                          i === current ? { ...c, text: joinParas(newParas) } : c
+                        ),
+                      };
+                      setBook(proj.id, updated);
+                    }}
+                  >
+                    Remover
+                  </button>
+                </div>
+              </div>
+              
+              {/* Anotações e Comentários para este parágrafo */}
+              <div style={{ marginTop: "12px", padding: "12px", background: "var(--surface2)", borderRadius: "6px" }}>
+                <AnnotationsManager
+                  currentChapter={current}
+                  currentParagraph={idx}
+                />
+                <CommentsManager
+                  currentChapter={current}
+                  currentParagraph={idx}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        {showAdvancedSearch && (
+          <AdvancedSearch
+            book={book}
+            onSearch={(results) => {
+              setAdvancedSearchResults(results);
+            }}
+            onClose={() => {
+              setShowAdvancedSearch(false);
+              setAdvancedSearchResults([]);
+            }}
+          />
+        )}
+
+        {/* Assistente IA */}
+        <AIAssistant
+          book={book}
+          currentChapter={ch}
+        />
+
+        {/* Leitura */}
+        {paras.map((p, idx) => (
+          <p key={idx}>{p}</p>
+        ))}
+
+        <div className="navigation">
+          <button
+            className="btn"
+            disabled={current === 0}
+            onClick={() => setCurrent(c => Math.max(0, c - 1))}
+          >
+            ◀ Anterior
+          </button>
+          <button
+            className="btn"
+            disabled={current >= book.chapters.length - 1}
+            onClick={() => setCurrent(c => Math.min(book.chapters.length - 1, c + 1))}
+          >
+            Próximo ▶
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
