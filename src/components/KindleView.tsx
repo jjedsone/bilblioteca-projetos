@@ -28,11 +28,28 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
   const readingRef = useRef<{ cancel: () => void; pause: () => void; resume: () => void } | null>(null);
   const highlightedWordRef = useRef<HTMLSpanElement | null>(null);
   const autoStartRef = useRef(false);
+  const isPausingRef = useRef(false); // Prevenir múltiplos cliques rápidos
+  const isResumingRef = useRef(false); // Prevenir múltiplos cliques rápidos
 
   const chapter = book.chapters[currentChapter];
   const paragraphs = chapter.text.split(/\n{2,}/).filter(Boolean);
   const fullText = paragraphs.join(" ");
   const words = fullText.split(/\s+/).filter(Boolean);
+
+  // Helper para verificar se realmente está lendo
+  const isActuallyReading = () => {
+    return isReading || (window.speechSynthesis?.speaking && !window.speechSynthesis.paused);
+  };
+
+  // Helper para verificar se pode pausar
+  const canPause = () => {
+    return isActuallyReading() && !isPaused && !window.speechSynthesis?.paused;
+  };
+
+  // Helper para verificar se pode parar
+  const canStop = () => {
+    return isActuallyReading() || window.speechSynthesis?.speaking || window.speechSynthesis?.paused;
+  };
 
   // Leitor de voz usando Web Speech API
   const stopReading = useCallback(() => {
@@ -52,28 +69,43 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
       return;
     }
 
-    const testText = "Olá! Este é um teste do leitor de voz. A voz está funcionando corretamente.";
-    const utterance = new SpeechSynthesisUtterance(testText);
-    utterance.lang = "pt-BR";
-    utterance.rate = readingSpeed;
-    utterance.volume = volume;
-    
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
+    // Cancelar qualquer leitura em andamento para evitar conflitos
+    if (isReading) {
+      window.speechSynthesis.cancel();
+      setIsReading(false);
+      setIsPaused(false);
+      // Aguardar um momento antes de iniciar o teste
+      setTimeout(() => {
+        runTestVoice();
+      }, 200);
+    } else {
+      runTestVoice();
     }
 
-    utterance.onend = () => {
-      console.log("Teste de voz finalizado");
-    };
-
-    utterance.onerror = (event) => {
-      if (event.error !== "interrupted" && event.error !== "canceled") {
-        alert(`Erro no teste de voz: ${event.error}`);
+    function runTestVoice() {
+      const testText = "Olá! Este é um teste do leitor de voz. A voz está funcionando corretamente.";
+      const utterance = new SpeechSynthesisUtterance(testText);
+      utterance.lang = "pt-BR";
+      utterance.rate = readingSpeed;
+      utterance.volume = volume;
+      
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
       }
-    };
 
-    window.speechSynthesis.speak(utterance);
-  }, [selectedVoice, readingSpeed, volume]);
+      utterance.onend = () => {
+        console.log("Teste de voz finalizado");
+      };
+
+      utterance.onerror = (event) => {
+        if (event.error !== "interrupted" && event.error !== "canceled") {
+          alert(`Erro no teste de voz: ${event.error}`);
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+  }, [selectedVoice, readingSpeed, volume, isReading]);
 
   const startReading = useCallback(() => {
     if (!("speechSynthesis" in window)) {
@@ -89,6 +121,10 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
     // Cancelar qualquer leitura anterior
     window.speechSynthesis.cancel();
 
+    // Marcar estado de leitura imediatamente para habilitar botões de pausa/stop
+    setIsReading(true);
+    setIsPaused(false);
+
     // Pequeno delay para garantir que o cancelamento foi processado
     setTimeout(() => {
       // Preparar o áudio primeiro
@@ -102,10 +138,6 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
       if (selectedVoice) {
         utterance.voice = selectedVoice;
       }
-
-      // Marcar como lendo ANTES de configurar os eventos
-      setIsReading(true);
-      setIsPaused(false);
 
       utterance.onstart = () => {
         console.log("Leitura iniciada");
@@ -145,14 +177,22 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
       };
 
       utterance.onerror = (event) => {
-        setIsReading(false);
+        console.log("Erro na leitura:", event.error);
         setCurrentWordIndex(0);
         
         // Ignorar erros de interrupção/cancelamento (são esperados e normais)
         if (event.error === "interrupted" || event.error === "canceled") {
-          // Não fazer nada - são ações esperadas do usuário
+          // Resetar estados apenas se não estiver pausado
+          if (!window.speechSynthesis?.paused) {
+            setIsReading(false);
+            setIsPaused(false);
+          }
           return;
         }
+        
+        // Para outros erros, resetar estados
+        setIsReading(false);
+        setIsPaused(false);
         
         // Tratamento de erros reais
         let errorMessage = "Erro ao ler o texto. ";
@@ -190,17 +230,63 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
 
       readingRef.current = { 
         cancel: () => {
-          window.speechSynthesis.cancel();
+          if (window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+          }
           setIsReading(false);
           setIsPaused(false);
+          setCurrentWordIndex(0);
+          setReadingProgress(0);
         },
         pause: () => {
-          window.speechSynthesis.pause();
-          setIsPaused(true);
+          // Prevenir múltiplos cliques rápidos
+          if (isPausingRef.current) return;
+          isPausingRef.current = true;
+
+          // Verificar se há leitura em andamento antes de pausar
+          if (window.speechSynthesis && window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+            try {
+              window.speechSynthesis.pause();
+              // O estado será atualizado pelo evento onpause para garantir sincronização
+            } catch (error) {
+              console.warn("Erro ao pausar:", error);
+              // Em caso de erro, atualizar estado manualmente
+              setIsPaused(true);
+            }
+          } else {
+            // Se já estiver pausado ou não estiver falando, apenas atualizar estado
+            setIsPaused(true);
+          }
+
+          // Permitir novo clique após um breve delay
+          setTimeout(() => {
+            isPausingRef.current = false;
+          }, 300);
         },
         resume: () => {
-          window.speechSynthesis.resume();
-          setIsPaused(false);
+          // Prevenir múltiplos cliques rápidos
+          if (isResumingRef.current) return;
+          isResumingRef.current = true;
+
+          // Verificar se está pausado antes de retomar
+          if (window.speechSynthesis && window.speechSynthesis.paused) {
+            try {
+              window.speechSynthesis.resume();
+              // O estado será atualizado pelo evento onresume para garantir sincronização
+            } catch (error) {
+              console.warn("Erro ao retomar:", error);
+              // Em caso de erro, atualizar estado manualmente
+              setIsPaused(false);
+            }
+          } else {
+            // Se não estiver pausado, apenas atualizar estado
+            setIsPaused(false);
+          }
+
+          // Permitir novo clique após um breve delay
+          setTimeout(() => {
+            isResumingRef.current = false;
+          }, 300);
         }
       };
       
@@ -254,21 +340,26 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
       } else if (e.key === " " || e.key === "Spacebar") {
         // Espaço para pausar/retomar
         e.preventDefault();
-        if (isReading) {
-          if (isPaused) {
-            if (readingRef.current) {
-              readingRef.current.resume();
-            }
+        if (isReading && readingRef.current) {
+          // Verificar estado real do speechSynthesis para evitar race conditions
+          const isActuallyPaused = window.speechSynthesis?.paused ?? isPaused;
+          if (isActuallyPaused) {
+            readingRef.current.resume();
           } else {
-            if (readingRef.current) {
-              readingRef.current.pause();
-            }
+            readingRef.current.pause();
           }
         }
       } else if (e.key === "p" || e.key === "P") {
-        // P para pausar
-        if (isReading && !isPaused && readingRef.current) {
-          readingRef.current.pause();
+        // P para pausar/retomar (mesmo comportamento do espaço)
+        e.preventDefault();
+        if (isReading && readingRef.current) {
+          // Verificar estado real do speechSynthesis para evitar race conditions
+          const isActuallyPaused = window.speechSynthesis?.paused ?? isPaused;
+          if (isActuallyPaused) {
+            readingRef.current.resume();
+          } else {
+            readingRef.current.pause();
+          }
         }
       } else if (e.key === "b" || e.key === "B") {
         saveBookmark();
@@ -325,6 +416,38 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
       }
     };
   }, []);
+
+  // Sincronizar estado do speechSynthesis com o estado do React periodicamente
+  useEffect(() => {
+    if (!isReading) return;
+
+    const syncInterval = setInterval(() => {
+      if (window.speechSynthesis) {
+        const isActuallySpeaking = window.speechSynthesis.speaking;
+        const isActuallyPaused = window.speechSynthesis.paused;
+
+        // Sincronizar estado de leitura
+        if (!isActuallySpeaking && isReading) {
+          // Se não está falando mas o estado diz que está lendo, pode ter terminado
+          // Verificar novamente após um pequeno delay para evitar falsos positivos
+          setTimeout(() => {
+            if (window.speechSynthesis && !window.speechSynthesis.speaking && isReading) {
+              setIsReading(false);
+              setIsPaused(false);
+              setCurrentWordIndex(0);
+            }
+          }, 100);
+        }
+
+        // Sincronizar estado de pausa
+        if (isActuallySpeaking && isPaused !== isActuallyPaused) {
+          setIsPaused(isActuallyPaused);
+        }
+      }
+    }, 500); // Verificar a cada 500ms
+
+    return () => clearInterval(syncInterval);
+  }, [isReading, isPaused]);
 
   // Limpar leitura ao mudar de capítulo ou desmontar componente
   useEffect(() => {
@@ -496,29 +619,151 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
 
           {/* Sumário */}
           <div style={{ marginBottom: 24 }}>
-            <h4 style={{ marginTop: 0, marginBottom: 12, fontSize: "14px" }}>Sumário</h4>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: "200px", overflowY: "auto" }}>
-              {book.chapters.map((ch, idx) => (
-                <button
-                  key={ch.id}
-                  onClick={() => {
-                    setCurrentChapter(idx);
-                    setIsMenuOpen(false);
-                  }}
-                  style={{
-                    background: idx === currentChapter ? "#444" : "transparent",
-                    border: "none",
-                    color: "#fff",
-                    textAlign: "left",
-                    padding: "8px 12px",
-                    cursor: "pointer",
-                    borderRadius: "4px",
-                    fontSize: "13px",
-                  }}
-                >
-                  {idx + 1}. {ch.title}
-                </button>
-              ))}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h4 style={{ marginTop: 0, marginBottom: 0, fontSize: "14px" }}>📑 Sumário</h4>
+              <span style={{ fontSize: "11px", opacity: 0.7, color: "#fff" }}>
+                {book.chapters.length} {book.chapters.length === 1 ? "capítulo" : "capítulos"}
+              </span>
+            </div>
+            <div style={{ 
+              display: "flex", 
+              flexDirection: "column", 
+              gap: 6, 
+              maxHeight: "300px", 
+              overflowY: "auto",
+              paddingRight: "4px",
+            }}>
+              {book.chapters.map((ch, idx) => {
+                const wordCount = ch.text.split(/\s+/).filter(Boolean).length;
+                const estimatedPages = Math.ceil(wordCount / 250);
+                const isCurrent = idx === currentChapter;
+                
+                return (
+                  <button
+                    key={ch.id}
+                    onClick={() => {
+                      setCurrentChapter(idx);
+                      setIsMenuOpen(false);
+                    }}
+                    style={{
+                      background: isCurrent 
+                        ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" 
+                        : idx < currentChapter 
+                        ? "rgba(76, 175, 80, 0.1)" 
+                        : "transparent",
+                      border: isCurrent ? "2px solid #667eea" : "1px solid rgba(255, 255, 255, 0.1)",
+                      color: "#fff",
+                      padding: "37px 1px",
+                      cursor: "pointer",
+                      borderRadius: "6px",
+                      fontSize: "13px",
+                      transition: "all 0.2s ease",
+                      lineHeight: 1.5,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isCurrent) {
+                        e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)";
+                        e.currentTarget.style.transform = "translateX(4px)";
+                        e.currentTarget.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.2)";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isCurrent) {
+                        e.currentTarget.style.background = idx < currentChapter 
+                          ? "rgba(76, 175, 80, 0.1)" 
+                          : "transparent";
+                        e.currentTarget.style.transform = "translateX(0)";
+                        e.currentTarget.style.boxShadow = "none";
+                      }
+                    }}
+                  >
+                    <div style={{ 
+                      display: "flex", 
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "6px",
+                      marginBottom: "4px",
+                    }}>
+                      <div style={{ width: "100%" }}>
+                        <div style={{ 
+                          fontWeight: isCurrent ? 700 : 600,
+                          fontSize: isCurrent ? "14px" : "13px",
+                          marginBottom: "2px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "8px",
+                          flexWrap: "wrap",
+                        }}>
+                          <span style={{ 
+                            opacity: 0.6, 
+                            fontSize: "11px",
+                            minWidth: "24px",
+                            textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                          }}>
+                            {String(idx + 1).padStart(2, "0")}
+                          </span>
+                          <span style={{ textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>{ch.title}</span>
+                          {isCurrent && (
+                            <span style={{ 
+                              fontSize: "10px", 
+                              background: "rgba(255, 255, 255, 0.2)",
+                              padding: "2px 6px",
+                              borderRadius: "10px",
+                              textShadow: "0 1px 2px rgba(0,0,0,0.4)",
+                            }}>
+                              Atual
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ 
+                          fontSize: "11px", 
+                          opacity: 0.7,
+                          display: "flex",
+                          gap: "12px",
+                          justifyContent: "center",
+                          flexWrap: "wrap",
+                          textShadow: "0 1px 2px rgba(0,0,0,0.4)",
+                        }}>
+                          <span>📄 ~{estimatedPages} {estimatedPages === 1 ? "página" : "páginas"}</span>
+                          <span>📝 {wordCount.toLocaleString()} {wordCount === 1 ? "palavra" : "palavras"}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Barra de progresso visual */}
+                    <div style={{
+                      position: "absolute",
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      height: "2px",
+                      background: isCurrent 
+                        ? "rgba(255, 255, 255, 0.3)" 
+                        : idx < currentChapter 
+                        ? "rgba(76, 175, 80, 0.5)" 
+                        : "rgba(255, 255, 255, 0.1)",
+                      borderRadius: "0 0 6px 6px",
+                    }} />
+                  </button>
+                );
+              })}
+            </div>
+            {/* Estatísticas do livro */}
+            <div style={{ 
+              marginTop: 12, 
+              padding: "8px 12px", 
+              background: "rgba(255, 255, 255, 0.05)",
+              borderRadius: "6px",
+              fontSize: "11px",
+              opacity: 0.8,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
+                <span>📚 Total: {book.chapters.reduce((acc, ch) => acc + ch.text.split(/\s+/).filter(Boolean).length, 0).toLocaleString()} palavras</span>
+                <span>📄 ~{book.chapters.reduce((acc, ch) => acc + Math.ceil(ch.text.split(/\s+/).filter(Boolean).length / 250), 0)} páginas</span>
+              </div>
             </div>
           </div>
 
@@ -587,58 +832,109 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
                     justifyContent: "center",
                     gap: "8px",
                     opacity: isReading && !isPaused ? 0.6 : 1,
+                    transition: "all 0.2s ease",
+                    transform: isReading && !isPaused ? "scale(1)" : "scale(1)",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!(isReading && !isPaused)) {
+                      e.currentTarget.style.transform = "scale(1.05)";
+                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(76, 175, 80, 0.3)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                    e.currentTarget.style.boxShadow = "none";
                   }}
                   title={isReading && !isPaused ? "Leitura em andamento" : isPaused ? "Retomar leitura" : "Iniciar leitura"}
                 >
                   ▶️ {isPaused ? "Retomar Leitura" : "Iniciar Leitura"}
                 </button>
                 
-                {/* Botão Pause - sempre visível */}
+                {/* Botão Pause - sempre visível e funcional */}
                 <button
                   onClick={() => {
                     if (isReading && !isPaused && readingRef.current) {
                       readingRef.current.pause();
+                    } else if (window.speechSynthesis?.speaking && !window.speechSynthesis.paused) {
+                      // Fallback: tentar pausar diretamente se o ref não estiver disponível
+                      try {
+                        window.speechSynthesis.pause();
+                        setIsPaused(true);
+                      } catch (error) {
+                        console.warn("Erro ao pausar diretamente:", error);
+                      }
                     }
                   }}
-                  disabled={!isReading || isPaused}
+                  disabled={!canPause()}
                   style={{
-                    background: !isReading || isPaused ? "#666" : "#ff9800",
+                    background: !canPause() ? "#666" : "#ff9800",
                     border: "none",
                     color: "#fff",
                     padding: "10px",
                     borderRadius: "4px",
-                    cursor: !isReading || isPaused ? "not-allowed" : "pointer",
+                    cursor: !canPause() ? "not-allowed" : "pointer",
                     fontSize: "13px",
                     fontWeight: 600,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     gap: "8px",
-                    opacity: !isReading || isPaused ? 0.6 : 1,
+                    opacity: !canPause() ? 0.6 : 1,
+                    transition: "all 0.2s ease",
+                    transform: !isReading || isPaused ? "scale(1)" : "scale(1)",
                   }}
-                  title={!isReading ? "Nenhuma leitura em andamento" : isPaused ? "Leitura pausada" : "Pausar leitura"}
+                  onMouseEnter={(e) => {
+                    if (canPause()) {
+                      e.currentTarget.style.transform = "scale(1.05)";
+                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(255, 152, 0, 0.3)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                  title={!canPause() ? (isPaused ? "Leitura pausada" : "Nenhuma leitura em andamento") : "Pausar leitura"}
                 >
                   ⏸️ Pausar Leitura
                 </button>
                 
-                {/* Botão Stop - sempre visível */}
+                {/* Botão Stop - sempre visível e funcional quando há leitura */}
                 <button
-                  onClick={stopReading}
-                  disabled={!isReading}
+                  onClick={() => {
+                    if (isReading && readingRef.current) {
+                      readingRef.current.cancel();
+                    } else if (window.speechSynthesis?.speaking || window.speechSynthesis?.paused) {
+                      // Fallback: parar diretamente se o ref não estiver disponível
+                      stopReading();
+                    }
+                  }}
+                  disabled={!canStop()}
                   style={{
-                    background: !isReading ? "#666" : "#d32f2f",
+                    background: !canStop() ? "#666" : "#d32f2f",
                     border: "none",
                     color: "#fff",
                     padding: "10px",
                     borderRadius: "4px",
-                    cursor: !isReading ? "not-allowed" : "pointer",
+                    cursor: !canStop() ? "not-allowed" : "pointer",
                     fontSize: "13px",
                     fontWeight: 600,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     gap: "8px",
-                    opacity: !isReading ? 0.6 : 1,
+                    opacity: !canStop() ? 0.6 : 1,
+                    transition: "all 0.2s ease",
+                    transform: !isReading ? "scale(1)" : "scale(1)",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (isReading) {
+                      e.currentTarget.style.transform = "scale(1.05)";
+                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(211, 47, 47, 0.3)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                    e.currentTarget.style.boxShadow = "none";
                   }}
                   title={!isReading ? "Nenhuma leitura em andamento" : "Parar leitura"}
                 >
@@ -655,6 +951,15 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
                     borderRadius: "4px",
                     cursor: "pointer",
                     fontSize: "12px",
+                    transition: "all 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "scale(1.05)";
+                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(33, 150, 243, 0.3)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                    e.currentTarget.style.boxShadow = "none";
                   }}
                   title="Testar a voz selecionada"
                 >
@@ -1060,6 +1365,15 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
                 borderRadius: "4px",
                 fontSize: "11px",
                 opacity: isReading && !isPaused ? 0.6 : 1,
+                transition: "all 0.2s ease",
+              }}
+              onMouseEnter={(e) => {
+                if (!(isReading && !isPaused)) {
+                  e.currentTarget.style.transform = "scale(1.1)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "scale(1)";
               }}
               title={isReading && !isPaused ? "Leitura em andamento" : isPaused ? "Retomar" : "Iniciar"}
             >
@@ -1069,28 +1383,52 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
               onClick={() => {
                 if (isReading && !isPaused && readingRef.current) {
                   readingRef.current.pause();
+                } else if (window.speechSynthesis?.speaking && !window.speechSynthesis.paused) {
+                  // Fallback: tentar pausar diretamente se o ref não estiver disponível
+                  try {
+                    window.speechSynthesis.pause();
+                    setIsPaused(true);
+                  } catch (error) {
+                    console.warn("Erro ao pausar diretamente:", error);
+                  }
                 }
               }}
-              disabled={!isReading || isPaused}
+              disabled={!canPause()}
               style={{
-                background: !isReading || isPaused ? "#666" : "#ff9800",
+                background: !canPause() ? "#666" : "#ff9800",
                 border: "none",
                 color: "#fff",
                 padding: "6px 12px",
-                cursor: !isReading || isPaused ? "not-allowed" : "pointer",
+                cursor: !canPause() ? "not-allowed" : "pointer",
                 borderRadius: "4px",
                 fontSize: "11px",
-                opacity: !isReading || isPaused ? 0.6 : 1,
+                opacity: !canPause() ? 0.6 : 1,
+                transition: "all 0.2s ease",
               }}
-              title={!isReading ? "Nenhuma leitura" : isPaused ? "Pausado" : "Pausar"}
+              onMouseEnter={(e) => {
+                if (canPause()) {
+                  e.currentTarget.style.transform = "scale(1.1)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "scale(1)";
+              }}
+              title={!canPause() ? (isPaused ? "Pausado" : "Nenhuma leitura") : "Pausar"}
             >
               ⏸️
             </button>
             <button
-              onClick={stopReading}
-              disabled={!isReading}
+              onClick={() => {
+                if (isReading && readingRef.current) {
+                  readingRef.current.cancel();
+                } else if (window.speechSynthesis?.speaking || window.speechSynthesis?.paused) {
+                  // Fallback: parar diretamente se o ref não estiver disponível
+                  stopReading();
+                }
+              }}
+              disabled={!canStop()}
               style={{
-                background: !isReading ? "#666" : "#d32f2f",
+                background: !canStop() ? "#666" : "#d32f2f",
                 border: "none",
                 color: "#fff",
                 padding: "6px 12px",
@@ -1098,6 +1436,15 @@ export default function KindleView({ book, onClose }: KindleViewProps) {
                 borderRadius: "4px",
                 fontSize: "11px",
                 opacity: !isReading ? 0.6 : 1,
+                transition: "all 0.2s ease",
+              }}
+              onMouseEnter={(e) => {
+                if (isReading) {
+                  e.currentTarget.style.transform = "scale(1.1)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "scale(1)";
               }}
               title={!isReading ? "Nenhuma leitura" : "Parar"}
             >

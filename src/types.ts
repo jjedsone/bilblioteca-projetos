@@ -29,6 +29,8 @@ export type Chapter = {
   text: string;
   /** Derivado de `text` quando necessário (UI/export) */
   paragraphs?: string[];
+  /** Versão rica (HTML sanitizado) por parágrafo */
+  richParagraphs?: string[];
 };
 
 export type Book = {

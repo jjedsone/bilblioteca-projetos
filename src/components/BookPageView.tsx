@@ -1,5 +1,5 @@
 // src/components/BookPageView.tsx
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { Book } from "../types";
 import { useProjects } from "../store/projects";
 
@@ -31,6 +31,9 @@ export default function BookPageView({
   const [pageColor, setPageColor] = useState<PageColor>("white");
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showProgress] = useState(true);
+  const [isFlipping, setIsFlipping] = useState(false);
+  const [flipDirection, setFlipDirection] = useState<"next" | "prev" | null>(null);
+  const flipTimeoutRef = useRef<number | null>(null);
 
   const { projects, saveReadingPosition, addBookmark, removeBookmark, getLastReadingPosition } = useProjects();
   const proj = projects.find((p) => p.id === projectId);
@@ -179,32 +182,67 @@ export default function BookPageView({
   const hoursRemaining = Math.floor(minutesRemaining / 60);
   const minsRemaining = minutesRemaining % 60;
 
+  useEffect(() => {
+    return () => {
+      if (flipTimeoutRef.current) {
+        window.clearTimeout(flipTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const triggerFlip = (direction: "next" | "prev", onComplete: () => void) => {
+    if (isFlipping) return;
+
+    if (flipTimeoutRef.current) {
+      window.clearTimeout(flipTimeoutRef.current);
+    }
+
+    setFlipDirection(direction);
+    setIsFlipping(true);
+
+    flipTimeoutRef.current = window.setTimeout(() => {
+      onComplete();
+      setIsFlipping(false);
+      setFlipDirection(null);
+    }, 600);
+  };
+
   const goToNextPage = () => {
+    if (isFlipping) return;
     if (pageNumber < totalPages) {
-      setPageNumber(pageNumber + 1);
+      triggerFlip("next", () => setPageNumber((prev) => prev + 1));
     } else if (currentChapter < book.chapters.length - 1) {
-      onChapterChange(currentChapter + 1);
-      setPageNumber(1);
+      triggerFlip("next", () => {
+        onChapterChange(currentChapter + 1);
+        setPageNumber(1);
+      });
     }
   };
 
   const goToPreviousPage = () => {
+    if (isFlipping) return;
     if (pageNumber > 1) {
-      setPageNumber(pageNumber - 1);
+      triggerFlip("prev", () => setPageNumber((prev) => Math.max(1, prev - 1)));
     } else if (currentChapter > 0) {
-      onChapterChange(currentChapter - 1);
-      setPageNumber(1);
+      triggerFlip("prev", () => {
+        onChapterChange(currentChapter - 1);
+        setPageNumber(1);
+      });
     }
   };
 
-  const renderPage = (content: string[], isLeft: boolean = false, pageNum: number = pageNumber) => {
+  const renderPage = (
+    content: string[],
+    options: { isLeft?: boolean; pageNum?: number; className?: string } = {}
+  ) => {
+    const { isLeft = false, pageNum = pageNumber, className } = options;
     const hasBookmark = currentBookmarks.some(
       (b) => b.chapterIndex === currentChapter && b.pageNumber === pageNum
     );
 
     return (
       <div
-        className="book-page"
+        className={`book-page ${className ?? ""}`.trim()}
         style={{
           position: "relative",
           width: singlePage ? "100%" : "48%",
@@ -299,7 +337,7 @@ export default function BookPageView({
               fontFamily: "Arial, sans-serif",
             }}
           >
-            {isLeft ? pageNum : pageNum + 1}
+            {pageNum}
           </div>
         </div>
 
@@ -350,7 +388,7 @@ export default function BookPageView({
           <button
             className="btn"
             onClick={goToPreviousPage}
-            disabled={pageNumber === 1 && currentChapter === 0}
+            disabled={(pageNumber === 1 && currentChapter === 0) || isFlipping}
             title="Página anterior"
           >
             ← Anterior
@@ -366,7 +404,7 @@ export default function BookPageView({
           <button
             className="btn"
             onClick={goToNextPage}
-            disabled={pageNumber === totalPages && currentChapter === book.chapters.length - 1}
+            disabled={(pageNumber === totalPages && currentChapter === book.chapters.length - 1) || isFlipping}
             title="Próxima página"
           >
             Próxima →
@@ -375,7 +413,7 @@ export default function BookPageView({
 
         <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
           {onSinglePageChange && (
-            <button
+          <button
               className={`btn ${singlePage ? "primary" : ""}`}
               onClick={() => onSinglePageChange(!singlePage)}
               title={singlePage ? "Modo 2 páginas" : "Modo 1 página"}
@@ -456,11 +494,33 @@ export default function BookPageView({
         }}
       >
         {singlePage ? (
-          renderPage(currentPageContent)
+          renderPage(currentPageContent, {
+            pageNum: pageNumber,
+            className:
+              isFlipping && flipDirection
+                ? flipDirection === "next"
+                  ? "page-flip-next"
+                  : "page-flip-prev"
+                : undefined,
+          })
         ) : (
           <>
-            {renderPage(currentPageContent, true)}
-            {renderPage(nextPageContent, false)}
+            {renderPage(currentPageContent, {
+              isLeft: true,
+              pageNum: pageNumber,
+              className:
+                isFlipping && flipDirection === "prev"
+                  ? "page-flip-prev"
+                  : undefined,
+            })}
+            {renderPage(nextPageContent, {
+              isLeft: false,
+              pageNum: pageNumber + 1,
+              className:
+                isFlipping && flipDirection === "next"
+                  ? "page-flip-next"
+                  : undefined,
+            })}
           </>
         )}
       </div>

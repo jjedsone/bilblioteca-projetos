@@ -7,18 +7,17 @@
 
 
 ### 💡 Sugestões
-- [ ] **Destaque de palavras**: Destacar palavras enquanto lê
+- [x] **Destaque de palavras**: Destacar palavras enquanto lê
 - [ ] **Anotações inline**: Adicionar notas diretamente no texto
-- [ ] **Busca avançada**: Buscar por palavras, frases, parágrafos
+- [x] **Busca avançada**: Buscar por palavras, frases, parágrafos (filtros por anotações/comentários/Dracula)
 - [ ] **Comparação de versões**: Ver diferenças entre versões
 - [ ] **Modo apresentação**: Para apresentar o livro
 
 
 
-
 ### 💡 Sugestões
-- [ ] **Editor rico**: Formatação (negrito, itálico, sublinhado)
-- [ ] **Sugestões de correção**: Gramática e ortografia
+- [x] **Editor rico**: Formatação (negrito, itálico, sublinhado, limpeza de estilo)
+- [x] **Sugestões de correção**: Gramática e ortografia (alertas automáticos por parágrafo)
 - [ ] **Histórico de edições**: Ver todas as mudanças
 - [ ] **Comparação lado a lado**: Antes e depois
 - [ ] **Comentários**: Adicionar comentários em parágrafos
@@ -32,7 +31,7 @@
 
 ### 💡 Sugestões
 - [ ] **Assistente de escrita**: Sugestões de melhorias
-- [ ] **Correção gramatical**: Correção automática
+- [x] **Correção gramatical**: Correção automática (sugestões contextuais por parágrafo)
 - [ ] **Geração de resumo**: Resumir capítulos
 - [ ] **Geração de títulos**: Sugerir títulos para capítulos
 - [ ] **Análise de sentimento**: Analisar o tom do texto
@@ -86,7 +85,7 @@
 
 
 ### 💡 Sugestões
-- [ ] **Busca avançada**: Filtros e operadores
+- [x] **Busca avançada**: Filtros, operadores e resultados navegáveis
 - [ ] **Busca por tags**: Buscar por tags
 - [ ] **Busca por categoria**: Filtrar por categoria
 - [ ] **Histórico de busca**: Ver buscas anteriores
@@ -122,13 +121,50 @@
 ## 🎮 Gamificação
 
 ### 💡 Sugestões
-- [ ] **Conquistas**: Desbloquear conquistas
-- [ ] **Estatísticas**: Ver suas estatísticas
-- [ ] **Ranking**: Comparar com outros usuários
-- [ ] **Metas**: Definir metas de leitura/escrita
-- [ ] **Badges**: Ganhar badges
-- [ ] **Streaks**: Sequências de dias
-- [ ] **Desafios**: Desafios semanais/mensais
+- [ ] **Conquistas**: Desbloquear conquistas ao completar objetivos
+  - Primeira leitura completa
+  - 10 livros lidos
+  - 100 páginas escritas
+  - Streak de 7 dias
+- [ ] **Estatísticas pessoais**: Visualizar suas estatísticas de uso
+  - Total de livros lidos/escritos
+  - Total de palavras lidas/escritas
+  - Tempo total de leitura/escrita
+  - Média de páginas por dia
+  - Gráficos de progresso ao longo do tempo
+- [ ] **Ranking**: Comparar com outros usuários (opcional/privado)
+  - Ranking global de leitura
+  - Ranking de escrita
+  - Ranking de streaks
+  - Grupos/amigos para comparação
+- [ ] **Metas**: Definir e acompanhar metas pessoais
+  - Meta de livros por mês/ano
+  - Meta de palavras escritas
+  - Meta de páginas lidas por dia
+  - Notificações de progresso
+- [ ] **Badges**: Ganhar badges por marcos alcançados
+  - Badge "Iniciante" (1º livro)
+  - Badge "Leitor ávido" (10 livros)
+  - Badge "Autor" (1º livro escrito)
+  - Badge "Disciplinado" (streak de 30 dias)
+- [ ] **Streaks**: Sequências de dias consecutivos
+  - Streak de leitura diária
+  - Streak de escrita diária
+  - Visualização do calendário de streaks
+  - Recuperação de streaks perdidos
+- [ ] **Desafios**: Desafios para manter engajamento
+  - Desafios semanais (ex: ler 100 páginas)
+  - Desafios mensais (ex: completar 2 livros)
+  - Desafios personalizados
+  - Desafios da comunidade
+- [ ] **Níveis/XP**: Sistema de experiência e níveis
+  - Ganhar XP por ações realizadas
+  - Subir de nível ao acumular XP
+  - Benefícios por nível alcançado
+- [ ] **Recompensas**: Recompensas por conquistas
+  - Temas exclusivos
+  - Avatares personalizados
+  - Funcionalidades desbloqueadas
 
 ## 🌐 Colaboração
 
