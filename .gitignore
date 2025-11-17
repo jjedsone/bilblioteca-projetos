@@ -11,9 +11,15 @@ node_modules
 dist
 dist-ssr
 *.local
+.env.local
+.env*.local
 
 # Firebase local cache
 .firebase
+
+# Backend data
+server/data/*.json
+!server/data/.gitkeep
 
 # Editor directories and files
 .vscode/*

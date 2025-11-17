@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Regras para a coleção de projetos
+    match /projects/{projectId} {
+      // Permitir leitura e escrita para todos (pode ser restringido depois com autenticação)
+      allow read, write: if true;
+    }
+  }
+}
+

@@ -4,31 +4,28 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Book } from "../types";
 import { makeId } from "../types";
-import localforage from "localforage";
+import { firestoreStorage } from "./firestoreStorage";
+import { firestoreService } from "../services/firestore";
 
 /**
  * Modelo clássico e coerente:
  * - Project descreve apenas o PROJETO (id, name, datas) e guarda o BOOK dentro de `book`.
  * - Stacks e versions referenciam SEMPRE objetos Book completos (em memória).
+ * - Usa Firestore como storage principal com fallback para localStorage
  */
-localforage.config({
-  name: "txt-book",
-  storeName: "projects", // nome da store interna
-  description: "Projetos e livros do app TXT→Livro",
-});
 
-/**
- * Storage adapter para usar localforage com zustand persist
- */
-const storage = {
+// Usar Firestore se disponível, caso contrário usar localStorage
+const USE_FIRESTORE = import.meta.env.VITE_USE_FIRESTORE !== "false";
+
+const storage = USE_FIRESTORE ? firestoreStorage : {
   getItem: async (name: string): Promise<string | null> => {
-    return (await localforage.getItem(name)) as string | null;
+    return localStorage.getItem(name);
   },
   setItem: async (name: string, value: string): Promise<void> => {
-    await localforage.setItem(name, value);
+    localStorage.setItem(name, value);
   },
   removeItem: async (name: string): Promise<void> => {
-    await localforage.removeItem(name);
+    localStorage.removeItem(name);
   },
 };
 
@@ -681,10 +678,12 @@ export const useProjects = create<State & Actions>()(
       }),
 
       /**
-       * Hidratação: converter ISO de volta para Date
+       * Hidratação: converter ISO de volta para Date e sincronizar com Firestore
        */
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => async (state) => {
         if (!state) return;
+        
+        // Converter ISO strings para Date
         state.projects = state.projects.map((p) => ({
           ...p,
           createdAt:
@@ -725,7 +724,98 @@ export const useProjects = create<State & Actions>()(
               typeof c.createdAt === "string" ? new Date(c.createdAt) : c.createdAt,
           })),
         }));
+        
+        // Sincronizar com Firestore se habilitado
+        if (!USE_FIRESTORE) return;
+        
+        try {
+          // Carregar projetos do Firestore
+          const firestoreProjects = await firestoreService.getAllProjects();
+          
+          if (firestoreProjects.length > 0 || state.projects.length > 0) {
+            // Sincronizar: mesclar projetos locais com os do Firestore
+            const localProjects = state.projects || [];
+            const mergedProjects = mergeProjects(localProjects, firestoreProjects);
+            
+            state.projects = mergedProjects;
+            
+            // Se não tiver selectedId e houver projetos, selecionar o primeiro
+            if (!state.selectedId && mergedProjects.length > 0) {
+              state.selectedId = mergedProjects[0].id;
+            }
+          }
+        } catch (error) {
+          console.error("Erro ao sincronizar com Firestore:", error);
+          // Continuar com dados locais se Firestore falhar
+        }
       },
     }
   )
 );
+
+// Função para mesclar projetos locais com os do Firestore
+function mergeProjects(local: Project[], firestore: Project[]): Project[] {
+  const merged: Project[] = [];
+  const firestoreMap = new Map(firestore.map(p => [p.id, p]));
+  const localMap = new Map(local.map(p => [p.id, p]));
+  
+  // Priorizar Firestore (mais recente), mas manter undo/redo stacks locais
+  firestore.forEach(fsProject => {
+    const localProject = localMap.get(fsProject.id);
+    if (localProject) {
+      // Mesclar: usar dados do Firestore mas manter stacks locais
+      merged.push({
+        ...fsProject,
+        undoStack: localProject.undoStack || [],
+        redoStack: localProject.redoStack || [],
+        versions: localProject.versions || [],
+      });
+    } else {
+      merged.push(fsProject);
+    }
+  });
+  
+  // Adicionar projetos locais que não estão no Firestore
+  local.forEach(localProject => {
+    if (!firestoreMap.has(localProject.id)) {
+      merged.push(localProject);
+      // Tentar salvar no Firestore (background)
+      firestoreService.createProject(localProject).catch(console.error);
+    }
+  });
+  
+  // Ordenar por updatedAt (mais recente primeiro)
+  return merged.sort((a, b) => {
+    const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : new Date(a.updatedAt).getTime();
+    const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : new Date(b.updatedAt).getTime();
+    return bTime - aTime;
+  });
+}
+
+// Sincronizar com Firestore após mudanças (apenas se usar Firestore)
+if (USE_FIRESTORE && typeof window !== "undefined") {
+  // Interceptar mudanças e sincronizar com Firestore
+  useProjects.subscribe(async (state) => {
+    // Debounce para evitar muitas chamadas
+    clearTimeout((window as any).__firestoreSyncTimeout);
+    (window as any).__firestoreSyncTimeout = setTimeout(async () => {
+      try {
+        // Salvar cada projeto individualmente no Firestore
+        for (const project of state.projects) {
+          try {
+            const existing = await firestoreService.getProjectById(project.id);
+            if (existing) {
+              await firestoreService.updateProject(project.id, project);
+            } else {
+              await firestoreService.createProject(project);
+            }
+          } catch (error) {
+            console.error(`Erro ao sincronizar projeto ${project.id}:`, error);
+          }
+        }
+      } catch (error) {
+        console.error("Erro ao sincronizar projetos com Firestore:", error);
+      }
+    }, 1000); // Aguardar 1 segundo após última mudança
+  });
+}
